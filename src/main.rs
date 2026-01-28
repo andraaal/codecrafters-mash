@@ -3,7 +3,7 @@ mod command;
 #[allow(unused_imports)]
 use std::io::{self, Write};
 use std::process::{exit};
-use std::str::SplitWhitespace;
+use std::str::{FromStr, SplitWhitespace};
 use crate::command::Command;
 
 fn main() {
@@ -31,9 +31,20 @@ fn parse_command(raw: String) {
     }
 }
 
-fn execute(cmd: Command, args: SplitWhitespace) {
+fn execute(cmd: Command, mut args: SplitWhitespace) {
     match cmd {
         Command::Exit => exit(0),
         Command::Echo => println!("{}", args.collect::<Vec<_>>().join(" ")),
+        Command::Type => {
+            if let Some(next) = args.next() {
+                if Command::from_str(next).is_ok() {
+                    println!("{} is a shell builtin", next);
+                } else {
+                    println!("{}: not found", next);
+                }
+            } else {
+                println!("Type requires at least one argument. If more than one are provided all but the first are discarded.");
+            }
+        }
     }
 }

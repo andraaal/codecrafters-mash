@@ -3,6 +3,7 @@ use std::str::FromStr;
 pub(crate) enum Command {
     Exit,
     Echo,
+    Type,
 }
 
 impl FromStr for Command {
@@ -12,6 +13,7 @@ impl FromStr for Command {
         match s {
             "exit" => Ok(Command::Exit),
             "echo" => Ok(Command::Echo),
+            "type" => Ok(Command::Type),
             _ => Err(format!("{}: command not found", s)),
         }
     }
