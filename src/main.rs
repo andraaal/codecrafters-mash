@@ -47,7 +47,7 @@ fn execute_builtin(cmd: Builtin, mut args: SplitWhitespace) {
         Builtin::Echo => println!("{}", args.collect::<Vec<_>>().join(" ")),
         Builtin::Type => {
             if let Some(next) = args.next() {
-                if Builtin::from_str(next).is_ok() {
+                if Builtin::from_str(next).is_ok() || next == "pwd" {
                     println!("{} is a shell builtin", next);
                 } else {
                     if let Some(path) = search_for_executable(next) {
