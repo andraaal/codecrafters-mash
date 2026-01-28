@@ -1,10 +1,12 @@
 mod command;
 
+use crate::command::Command;
+use faccess::PathExt;
 #[allow(unused_imports)]
 use std::io::{self, Write};
-use std::process::{exit};
+use std::path::PathBuf;
+use std::process::exit;
 use std::str::{FromStr, SplitWhitespace};
-use crate::command::Command;
 
 fn main() {
     loop {
@@ -40,11 +42,29 @@ fn execute(cmd: Command, mut args: SplitWhitespace) {
                 if Command::from_str(next).is_ok() {
                     println!("{} is a shell builtin", next);
                 } else {
-                    println!("{}: not found", next);
+                    if let Some(path) = search_for_executable(next) {
+                        println!("{}", path.display());
+                    } else {
+                        println!("{}: not found", next);
+                    }
                 }
             } else {
-                println!("Type requires at least one argument. If more than one are provided all but the first are discarded.");
+                println!(
+                    "Type requires at least one argument. If more than one are provided all but the first are discarded."
+                );
             }
         }
     }
+}
+
+fn search_for_executable(name: &str) -> Option<PathBuf> {
+    let path_var = std::env::var("PATH").unwrap();
+
+    for path_str in path_var.split(":") {
+        let path = PathBuf::new().join(format!("{}/{}", path_str, name).as_str());
+        if path.executable() {
+            return Some(path);
+        }
+    }
+    None
 }
