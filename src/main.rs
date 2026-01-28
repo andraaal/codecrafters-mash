@@ -3,7 +3,7 @@ mod builtin;
 use crate::builtin::Builtin;
 use faccess::PathExt;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{exit, Command, Stdio};
 use std::str::{FromStr, SplitWhitespace};
 
@@ -56,9 +56,9 @@ fn execute_builtin(cmd: Builtin, mut args: SplitWhitespace) {
         }
         Builtin::Cd => {
             if let Some(next) = args.next() {
-                let target_path = Path::new(next);
+                let target_path = &create_path(next);
 
-                if let Err(err) = std::env::set_current_dir(target_path) {
+                if let Err(_) = std::env::set_current_dir(target_path) {
                     println!("cd: {}: No such file or directory", target_path.display());
                 }
             } else {
@@ -97,4 +97,14 @@ fn search_for_executable(name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn create_path(string: &str) -> PathBuf {
+    let mut path = string.to_string();
+    #[cfg(target_family = "unix")]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        path = path.replace("~", home.as_str());
+    }
+    PathBuf::from(path)
 }
