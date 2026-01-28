@@ -1,11 +1,10 @@
 mod command;
 
-use crate::command::Command;
+use crate::command::Builtin;
 use faccess::PathExt;
-#[allow(unused_imports)]
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::process::exit;
+use std::process::{exit, Command, Stdio};
 use std::str::{FromStr, SplitWhitespace};
 
 fn main() {
@@ -18,28 +17,37 @@ fn main() {
             continue;
         }
 
-        parse_command(input);
+        execute(input);
     }
 }
 
-fn parse_command(raw: String) {
+fn execute(raw: String) {
     let mut words = raw.trim().split_whitespace();
 
-    let cmd = words.next().unwrap_or("").parse();
-
-    match cmd {
-        Ok(cmd) => execute(cmd, words),
-        Err(msg) => println!("{}", msg),
+    let cmd = words.next().unwrap_or("");
+    if let Ok(builtin) = cmd.parse() {
+        execute_builtin(builtin, words);
+    } else {
+        let mut command = Command::new(cmd);
+        for arg in words {
+            command.arg(arg);
+        }
+        command.stdout(Stdio::inherit());
+        command.stderr(Stdio::inherit());
+        command.stdin(Stdio::inherit());
+        if command.status().is_err() {
+            println!("{}: command not found", cmd);
+        }
     }
 }
 
-fn execute(cmd: Command, mut args: SplitWhitespace) {
+fn execute_builtin(cmd: Builtin, mut args: SplitWhitespace) {
     match cmd {
-        Command::Exit => exit(0),
-        Command::Echo => println!("{}", args.collect::<Vec<_>>().join(" ")),
-        Command::Type => {
+        Builtin::Exit => exit(0),
+        Builtin::Echo => println!("{}", args.collect::<Vec<_>>().join(" ")),
+        Builtin::Type => {
             if let Some(next) = args.next() {
-                if Command::from_str(next).is_ok() {
+                if Builtin::from_str(next).is_ok() {
                     println!("{} is a shell builtin", next);
                 } else {
                     if let Some(path) = search_for_executable(next) {
