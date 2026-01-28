@@ -1,9 +1,9 @@
-mod command;
+mod builtin;
 
-use crate::command::Builtin;
+use crate::builtin::Builtin;
 use faccess::PathExt;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{exit, Command, Stdio};
 use std::str::{FromStr, SplitWhitespace};
 
@@ -47,10 +47,25 @@ fn execute_builtin(cmd: Builtin, mut args: SplitWhitespace) {
         Builtin::Echo => println!("{}", args.collect::<Vec<_>>().join(" ")),
         Builtin::Pwd => {
             if let Ok(current) = std::env::current_dir() {
-                println!("{}",current.display());
+                println!("{}", current.display());
             } else {
-                println!("Current working directory either doesn't exist or you have insufficient privileges");
+                println!(
+                    "Current working directory either doesn't exist or you have insufficient privileges"
+                );
             };
+        }
+        Builtin::Cd => {
+            if let Some(next) = args.next() {
+                let target_path = Path::new(next);
+
+                if let Err(err) = std::env::set_current_dir(target_path) {
+                    println!("cd: {}: No such file or directory", target_path.display());
+                }
+            } else {
+                println!(
+                    "Cd requires at least one argument. If more than one are provided all but the first are discarded."
+                );
+            }
         }
         Builtin::Type => {
             if let Some(next) = args.next() {

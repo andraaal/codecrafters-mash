@@ -5,6 +5,7 @@ pub(crate) enum Builtin {
     Echo,
     Type,
     Pwd,
+    Cd,
 }
 
 impl FromStr for Builtin {
@@ -16,6 +17,7 @@ impl FromStr for Builtin {
             "echo" => Ok(Builtin::Echo),
             "type" => Ok(Builtin::Type),
             "pwd" => Ok(Builtin::Pwd),
+            "cd" => Ok(Builtin::Cd),
             _ => Err(format!("{}: command not found", s)),
         }
     }
