@@ -45,9 +45,16 @@ fn execute_builtin(cmd: Builtin, mut args: SplitWhitespace) {
     match cmd {
         Builtin::Exit => exit(0),
         Builtin::Echo => println!("{}", args.collect::<Vec<_>>().join(" ")),
+        Builtin::Pwd => {
+            if let Ok(current) = std::env::current_dir() {
+                println!("{}",current.display());
+            } else {
+                println!("Current working directory either doesn't exist or you have insufficient privileges");
+            };
+        }
         Builtin::Type => {
             if let Some(next) = args.next() {
-                if Builtin::from_str(next).is_ok() || next == "pwd" {
+                if Builtin::from_str(next).is_ok() {
                     println!("{} is a shell builtin", next);
                 } else {
                     if let Some(path) = search_for_executable(next) {

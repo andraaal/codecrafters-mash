@@ -4,6 +4,7 @@ pub(crate) enum Builtin {
     Exit,
     Echo,
     Type,
+    Pwd,
 }
 
 impl FromStr for Builtin {
@@ -14,6 +15,7 @@ impl FromStr for Builtin {
             "exit" => Ok(Builtin::Exit),
             "echo" => Ok(Builtin::Echo),
             "type" => Ok(Builtin::Type),
+            "pwd" => Ok(Builtin::Pwd),
             _ => Err(format!("{}: command not found", s)),
         }
     }
