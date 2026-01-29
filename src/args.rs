@@ -30,11 +30,10 @@ impl<'a> Iterator for Args<'a> {
                         let token = &self.raw[start.unwrap()..self.pos];
                         segments.push(token.to_string());
                         start = None;
-                        quotes = None;
                         // skip if quote is empty
                         if token.is_empty() {
-                            // Do nothing
-                        } else if self.pos < len && Some(bytes[self.pos]) == quotes {
+                            quotes = None;
+                        } else if self.pos + 1 < len && Some(bytes[self.pos + 1]) == quotes {
                             self.pos += 1;
                         } else {
                             self.pos += 1;
@@ -65,11 +64,7 @@ impl<'a> Iterator for Args<'a> {
             segments.push(self.raw[start..len].to_string());
         };
         let res = segments.join("");
-        if res.is_empty() {
-            None
-        } else {
-            Some(res)
-        }
+        if res.is_empty() { None } else { Some(res) }
     }
 }
 
