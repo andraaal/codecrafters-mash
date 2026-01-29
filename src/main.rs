@@ -1,11 +1,13 @@
+mod args;
 mod builtin;
 
+use crate::args::Args;
 use crate::builtin::Builtin;
 use faccess::PathExt;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::{exit, Command, Stdio};
-use std::str::{FromStr, SplitWhitespace};
+use std::str::FromStr;
 
 fn main() {
     loop {
@@ -22,13 +24,13 @@ fn main() {
 }
 
 fn execute(raw: String) {
-    let mut words = raw.trim().split_whitespace();
+    let mut words = Args::new(raw.trim());
 
-    let cmd = words.next().unwrap_or("");
+    let cmd = words.next().unwrap_or_default();
     if let Ok(builtin) = cmd.parse() {
         execute_builtin(builtin, words);
     } else {
-        let mut command = Command::new(cmd);
+        let mut command = Command::new(&cmd);
         for arg in words {
             command.arg(arg);
         }
@@ -41,7 +43,7 @@ fn execute(raw: String) {
     }
 }
 
-fn execute_builtin(cmd: Builtin, mut args: SplitWhitespace) {
+fn execute_builtin(cmd: Builtin, mut args: Args) {
     match cmd {
         Builtin::Exit => exit(0),
         Builtin::Echo => println!("{}", args.collect::<Vec<_>>().join(" ")),
@@ -56,7 +58,7 @@ fn execute_builtin(cmd: Builtin, mut args: SplitWhitespace) {
         }
         Builtin::Cd => {
             if let Some(next) = args.next() {
-                let target_path = &create_path(next);
+                let target_path = &create_path(&next);
 
                 if let Err(_) = std::env::set_current_dir(target_path) {
                     println!("cd: {}: No such file or directory", target_path.display());
@@ -69,10 +71,10 @@ fn execute_builtin(cmd: Builtin, mut args: SplitWhitespace) {
         }
         Builtin::Type => {
             if let Some(next) = args.next() {
-                if Builtin::from_str(next).is_ok() {
+                if Builtin::from_str(&next).is_ok() {
                     println!("{} is a shell builtin", next);
                 } else {
-                    if let Some(path) = search_for_executable(next) {
+                    if let Some(path) = search_for_executable(&next) {
                         println!("{}", path.display());
                     } else {
                         println!("{}: not found", next);
