@@ -46,9 +46,6 @@ impl<'a> Iterator for Args<'a> {
                             quotes = None;
                         } else if self.pos + 1 < len && Some(bytes[self.pos + 1]) == quotes {
                             self.pos += 1;
-                        } else {
-                            self.pos += 1;
-                            return Some(segments.join(""));
                         }
                     }
                 }
