@@ -11,45 +11,39 @@ impl<'a> Iterator for Args<'a> {
         let len = bytes.len();
 
         let mut start = None;
-        let mut single_quotes = false;
+        let mut quotes = None;
         let mut segments = Vec::new();
 
         while self.pos < len {
             let b = bytes[self.pos];
 
             match b {
-                b'\'' => {
-                    if start.is_none() {
-                        // token starts after opening quote
-                        start = Some(self.pos + 1);
-                        single_quotes = true;
-                    } else if single_quotes {
+                b'\'' | b'"' => {
+                    if quotes.is_none() {
+                        // remember token type
+                        quotes = Some(b);
+                        let token = &self.raw[start.unwrap_or(self.pos)..self.pos];
+                        segments.push(token.to_string());
+                        start = None;
+                    } else if quotes == Some(b) {
                         // closing quote
                         let token = &self.raw[start.unwrap()..self.pos];
                         segments.push(token.to_string());
                         start = None;
-                        self.pos += 1;
                         // skip if quote is empty
                         if token.is_empty() {
-                            continue;
-                        } else if self.pos < len && bytes[self.pos] == b'\'' {
+                            // Do nothing
+                        } else if self.pos < len && Some(bytes[self.pos]) == quotes {
                             self.pos += 1;
-                            continue;
                         } else {
                             return Some(segments.join(""));
                         }
-                    } else {
-                        // We need to end the segment before the quotes
-                        let token = &self.raw[start.unwrap()..self.pos];
-                        segments.push(token.to_string());
-                        start = None;
                     }
                 }
 
-                b if b.is_ascii_whitespace() && !single_quotes => {
+                b if b.is_ascii_whitespace() && quotes.is_none() => {
                     if let Some(start) = start {
                         let token = &self.raw[start..self.pos];
-                        self.pos += 1;
                         segments.push(token.to_string());
                         return Some(segments.join(""));
                     }
@@ -65,10 +59,15 @@ impl<'a> Iterator for Args<'a> {
             self.pos += 1;
         }
 
-        start.map(|start| {
+        if let Some(start) = start {
             segments.push(self.raw[start..len].to_string());
-            segments.join("")
-        })
+        };
+        let res = segments.join("");
+        if res.is_empty() {
+            None
+        } else {
+            Some(res)
+        }
     }
 }
 
