@@ -42,10 +42,10 @@ impl<'a> Iterator for Args<'a> {
                         segments.push(token.to_string());
                         start = None;
                         // skip if quote is empty
-                        if token.is_empty() {
-                            quotes = None;
-                        } else if self.pos + 1 < len && Some(bytes[self.pos + 1]) == quotes {
+                        if self.pos + 1 < len && Some(bytes[self.pos + 1]) == quotes {
                             self.pos += 1;
+                        } else {
+                            quotes = None;
                         }
                     }
                 }
