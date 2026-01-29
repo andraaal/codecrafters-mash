@@ -24,18 +24,20 @@ impl<'a> Iterator for Args<'a> {
                         quotes = Some(b);
                         let token = &self.raw[start.unwrap_or(self.pos)..self.pos];
                         segments.push(token.to_string());
-                        start = None;
+                        start = Some(bytes.len().min(self.pos + 1));
                     } else if quotes == Some(b) {
                         // closing quote
                         let token = &self.raw[start.unwrap()..self.pos];
                         segments.push(token.to_string());
                         start = None;
+                        quotes = None;
                         // skip if quote is empty
                         if token.is_empty() {
                             // Do nothing
                         } else if self.pos < len && Some(bytes[self.pos]) == quotes {
                             self.pos += 1;
                         } else {
+                            self.pos += 1;
                             return Some(segments.join(""));
                         }
                     }
