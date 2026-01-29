@@ -20,8 +20,9 @@ impl<'a> Iterator for Args<'a> {
             match b {
                 b'\\' if quotes != Some(b'\'') => {
                     if self.pos+1 < len {
+                        let n = bytes[self.pos+1];
                         // Escape everything outside of quotes; escape only certain characters inside double quotes
-                        if quotes == None || b == b'\\' || b == b'"' || b == b'$' || b == b'\n' || b == b'`' {
+                        if quotes == None || n == b'\\' || n == b'"' || n == b'$' || n == b'\n' || n == b'`' {
                             let token = &self.raw[start.unwrap_or(self.pos)..self.pos];
                             segments.push(token.to_string());
                             self.pos += 1;
