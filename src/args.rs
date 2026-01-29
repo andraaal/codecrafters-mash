@@ -18,12 +18,15 @@ impl<'a> Iterator for Args<'a> {
             let b = bytes[self.pos];
 
             match b {
-                b'\\' if quotes.is_none() => {
-                    let token = &self.raw[start.unwrap_or(self.pos)..self.pos];
-                    segments.push(token.to_string());
+                b'\\' if quotes != Some(b'\'') => {
                     if self.pos+1 < len {
-                        self.pos += 1;
-                        start = Some(self.pos);
+                        // Escape everything outside of quotes; escape only certain characters inside double quotes
+                        if quotes == None || b == b'\\' || b == b'"' || b == b'$' || b == b'\n' || b == b'`' {
+                            let token = &self.raw[start.unwrap_or(self.pos)..self.pos];
+                            segments.push(token.to_string());
+                            self.pos += 1;
+                            start = Some(self.pos);
+                        }
                     }
                 }
                 b'\'' | b'"' => {
