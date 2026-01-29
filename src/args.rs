@@ -38,6 +38,11 @@ impl<'a> Iterator for Args<'a> {
                         } else {
                             return Some(segments.join(""));
                         }
+                    } else {
+                        // We need to end the segment before the quotes
+                        let token = &self.raw[start.unwrap()..self.pos];
+                        segments.push(token.to_string());
+                        start = None;
                     }
                 }
 
