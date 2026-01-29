@@ -18,13 +18,21 @@ impl<'a> Iterator for Args<'a> {
             let b = bytes[self.pos];
 
             match b {
+                b'\\' if quotes.is_none() => {
+                    let token = &self.raw[start.unwrap_or(self.pos)..self.pos];
+                    segments.push(token.to_string());
+                    if self.pos+1 < len {
+                        self.pos += 1;
+                        start = Some(self.pos);
+                    }
+                }
                 b'\'' | b'"' => {
                     if quotes.is_none() {
                         // remember token type
                         quotes = Some(b);
                         let token = &self.raw[start.unwrap_or(self.pos)..self.pos];
                         segments.push(token.to_string());
-                        start = Some(bytes.len().min(self.pos + 1));
+                        start = Some(len.min(self.pos + 1));
                     } else if quotes == Some(b) {
                         // closing quote
                         let token = &self.raw[start.unwrap()..self.pos];
