@@ -1,10 +1,8 @@
-use std::cell::RefCell;
 use crate::args::{Args, Token};
 use crate::builtin::{Builtin, BuiltinChild};
-use std::iter::Peekable;
-use std::process::{Child, Command, Stdio};
-use std::rc::Rc;
 use std::io::Error;
+use std::iter::Peekable;
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 
 pub(crate) struct Parser<'a> {
     tokens: Peekable<Args<'a>>,
@@ -126,7 +124,7 @@ impl<'a> Parser<'_> {
                         arguments.push(arg);
                     }
                     let mut command = Cmd::new(&token.to_text());
-                    command.set_args(&arguments);
+                    command.set_args(arguments);
                     Expr::Cmd(command)
                 },
             },
@@ -153,7 +151,6 @@ pub(crate) enum Expr {
     Error, // Error is just here to be able to return something. I couldn't be bothered to write proper error handling (yet).
 }
 
-
 // Define the target of the streams here; then start the process to convert into a ChildProcess
 pub(crate) enum Cmd {
     External(Command),
@@ -167,19 +164,19 @@ pub(crate) enum ChildProcess {
 }
 
 pub(crate) enum StreamTarget {
-    InheritStdout, // Piped to the Stdout of the parent process
-    InheritStderr, // Piped to the Stderr of the parent process
-    Pipe, // Can be accessed in the child created by spawn
-    Null, // To the void
-    Child(Rc<RefCell<ChildProcess>>), // Piped to the Stdin of the child
+    InheritStdout,     // Piped to the Stdout of the parent process
+    InheritStderr,     // Piped to the Stderr of the parent process
+    Pipe,              // Can be accessed in the child created by spawn
+    Null,              // To the void
+    Child(ChildStdin), // Piped to the Stdin of the child
 }
 
 pub(crate) enum StreamSource {
-    Inherit, // Piped from the Stdin of the parent process
-    Pipe, // Can be accessed in the child created by spawn
-    Null, // To the void
-    ChildStdout(Rc<RefCell<ChildProcess>>), // Piped from the Stdout of the child
-    ChildStderr(Rc<RefCell<ChildProcess>>), // Piped from the Stdin of the child
+    Inherit,                  // Piped from the Stdin of the parent process
+    Pipe,                     // Can be accessed in the child created by spawn
+    Null,                     // To the void
+    ChildStdout(ChildStdout), // Piped from the Stdout of the child
+    ChildStderr(ChildStderr), // Piped from the Stdin of the child
 }
 
 impl Cmd {
@@ -191,60 +188,118 @@ impl Cmd {
         }
     }
 
-    pub(crate)fn set_stdin(&mut self, target: StreamSource) -> Result<(), Error> {
+    pub(crate) fn set_stdin(&mut self, target: StreamSource) -> Result<(), Error> {
         match self {
-            Cmd::External(ref mut command) => {
+            Cmd::External(command) => {
                 let stdio: Stdio = match target {
                     StreamSource::Inherit => Stdio::inherit(),
                     StreamSource::Pipe => Stdio::piped(),
                     StreamSource::Null => Stdio::null(),
-                    StreamSource::ChildStdout(child) => {
-                        let x = &mut *child.borrow_mut();
-                        match x {
-                            ChildProcess::ExternalChild(external) => {
-                                external.stdout.take().into()
-                            }
-                            ChildProcess::BuiltinChild(_) => {}
-                        }
-                    }
-                    StreamSource::ChildStderr(ref child) => {}
+                    StreamSource::ChildStdout(child) => child.into(),
+                    StreamSource::ChildStderr(child) => child.into(),
                 };
                 command.stdin(stdio);
             }
-            Cmd::Builtin(_) => {}
+            Cmd::Builtin(builtin) => {
+                builtin.set_stdin(target);
+            }
         }
         Ok(())
     }
 
-    pub(crate)fn set_stdout(&mut self, target: StreamTarget) -> Result<(), Error> {
-        todo!()
+    pub(crate) fn set_stdout(&mut self, target: StreamTarget) -> Result<(), Error> {
+        match self {
+            Cmd::External(command) => {
+                let stdio: Stdio = match target {
+                    StreamTarget::InheritStdout => Stdio::inherit(),
+                    StreamTarget::InheritStderr => std::io::stderr().into(),
+                    StreamTarget::Pipe => Stdio::piped(),
+                    StreamTarget::Null => Stdio::null(),
+                    StreamTarget::Child(child) => child.into(),
+                };
+                command.stdout(stdio);
+            }
+            Cmd::Builtin(builtin) => {
+                builtin.set_stdout(target);
+            }
+        }
+        Ok(())
     }
 
-    pub(crate)fn set_stderr(&mut self, target: StreamTarget) -> Result<(), Error> {
-        todo!()
+    pub(crate) fn set_stderr(&mut self, target: StreamTarget) -> Result<(), Error> {
+        match self {
+            Cmd::External(command) => {
+                let stdio: Stdio = match target {
+                    StreamTarget::InheritStdout => std::io::stdout().into(),
+                    StreamTarget::InheritStderr => Stdio::inherit(),
+                    StreamTarget::Pipe => Stdio::piped(),
+                    StreamTarget::Null => Stdio::null(),
+                    StreamTarget::Child(child) => child.into(),
+                };
+                command.stderr(stdio);
+            }
+            Cmd::Builtin(builtin) => {
+                builtin.set_stderr(target);
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn spawn(self) -> Result<ChildProcess, Error> {
-        todo!()
-        // Note: Any stream that hasn't been defined ist inherit to find bugs and not deadlock anything
+        match self {
+            Cmd::External(mut command) => {
+                Ok(ChildProcess::ExternalChild(command.spawn()?))
+            }
+            Cmd::Builtin(builtin) => {
+                Ok(ChildProcess::BuiltinChild(builtin.spawn()?))
+            }
+        }
     }
 
-    pub(crate) fn set_args(&mut self, args: &[String]) {
-        todo!()
+    pub(crate) fn set_args(&mut self, args: Vec<String>) {
+        match self {
+            Cmd::External(command) => {
+                command.args(args);
+            }
+            Cmd::Builtin(builtin) => {
+                builtin.set_args(args);
+            }
+        }
     }
 }
 
 impl ChildProcess {
     pub(crate) fn wait(&mut self) -> Result<(), Error> {
-        todo!()
+        match self {
+            ChildProcess::ExternalChild(command) => {
+                command.wait()?;
+                Ok(())
+            }
+            ChildProcess::BuiltinChild(_) => {
+                // Nothing to do here; builtins are executed synchronously when the child is constructed
+                Ok(())
+            }
+        }
     }
-    pub(crate) fn get_stdout(&mut self) -> Option<Box<dyn std::io::Read>> {
-        todo!()
+    pub(crate) fn get_builtin_stdout(&mut self) -> Result<String, ()> {
+        if let ChildProcess::BuiltinChild(child) = self {
+            Ok(child.get_stdout())
+        } else {
+            Err(())
+        }
     }
-    pub(crate) fn get_stderr(&mut self) -> Option<Box<dyn std::io::Read>> {
-        todo!()
+    pub(crate) fn get_builtin_stderr(&mut self) -> Result<String, ()> {
+        if let ChildProcess::BuiltinChild(child) = self {
+            Ok(child.get_stderr())
+        } else {
+            Err(())
+        }
     }
-    pub(crate) fn get_stdin(&mut self) -> Option<Box<dyn std::io::Write>> {
-        todo!()
+    pub(crate) fn write_to_builtin_stdin(&mut self, input: &str) -> Result<(), ()> {
+        if let ChildProcess::BuiltinChild(child) = self {
+            Ok(child.write_to_stdin(input))
+        } else {
+            Err(())
+        }
     }
 }

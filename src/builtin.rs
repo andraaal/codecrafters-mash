@@ -1,7 +1,7 @@
 use crate::cmd::{ChildProcess, StreamSource, StreamTarget};
 use faccess::PathExt;
 use std::io::Write;
-use std::io::{Error, ErrorKind};
+use std::io::Error;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -70,10 +70,26 @@ impl Builtin {
     pub(crate) fn set_args(&mut self, args: Vec<String>) {
         self.args = args;
     }
+
+    pub(crate) fn spawn(self) -> Result<BuiltinChild, Error> {
+        BuiltinChild::new(self)
+    }
 }
 
 impl BuiltinChild {
-    pub(crate) fn execute(&mut self) -> Result<(), Error> {
+
+    fn new(inner: Builtin) -> Result<Self, Error> {
+        let mut child = BuiltinChild{
+            inner,
+            stdout: "".to_string(),
+            stdin: "".to_string(),
+            stderr: "".to_string(),
+        };
+        child.execute()?;
+        Ok(child)
+    }
+
+    fn execute(&mut self) -> Result<(), Error> {
         match self.inner.typ {
             BuiltinType::Exit => std::process::exit(0),
             BuiltinType::Echo => {
@@ -126,21 +142,9 @@ impl BuiltinChild {
             StreamTarget::InheritStderr => std::io::stderr().write_all(string.as_bytes())?,
             StreamTarget::Pipe => self.stdout.push_str(string),
             StreamTarget::Null => {}
-            StreamTarget::Child(ref target) => match &mut *target.borrow_mut() {
-                ChildProcess::ExternalChild(child) => {
-                    if let Some(ref mut child_stdin) = child.stdin {
-                        child_stdin.write_all(string.as_bytes())?;
-                    } else {
-                        return Err(Error::new(
-                            ErrorKind::BrokenPipe,
-                            "Stdin stream of child process not found. (already consumed or never piped)",
-                        ));
-                    }
-                }
-                ChildProcess::BuiltinChild(builtin) => {
-                    builtin.write_to_stdin(string)?;
-                }
-            },
+            StreamTarget::Child(ref mut target) => {
+                target.write_all(string.as_bytes())?;
+            }
         }
 
         Ok(())
@@ -152,21 +156,9 @@ impl BuiltinChild {
             StreamTarget::InheritStderr => std::io::stderr().write_all(string.as_bytes())?,
             StreamTarget::Pipe => self.stderr.push_str(string),
             StreamTarget::Null => {}
-            StreamTarget::Child(ref target) => match &mut *target.borrow_mut() {
-                ChildProcess::ExternalChild(child) => {
-                    if let Some(ref mut child_stdin) = child.stdin {
-                        child_stdin.write_all(string.as_bytes())?;
-                    } else {
-                        return Err(Error::new(
-                            ErrorKind::BrokenPipe,
-                            "Stdin stream of child process not found. (taken away or never piped)",
-                        ));
-                    }
-                }
-                ChildProcess::BuiltinChild(builtin) => {
-                    builtin.write_to_stdin(string)?;
-                }
-            },
+            StreamTarget::Child(ref mut target) => {
+                target.write_all(string.as_bytes())?;
+            }
         }
 
         Ok(())
@@ -194,7 +186,14 @@ impl BuiltinChild {
         PathBuf::from(path)
     }
 
-    pub(crate) fn write_to_stdin(&mut self, input: &str) -> Result<(), Error> {
-        todo!()
+    pub(crate) fn write_to_stdin(&mut self, input: &str) {
+        self.stdin.push_str(input);
+    }
+
+    pub(crate) fn get_stdout(&mut self) -> String {
+        std::mem::take(&mut self.stdout)
+    }
+    pub(crate) fn get_stderr(&mut self) -> String {
+        std::mem::take(&mut self.stderr)
     }
 }
