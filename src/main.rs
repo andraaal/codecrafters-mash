@@ -1,13 +1,16 @@
 mod args;
 mod builtin;
+mod cmd;
 
-use crate::args::Args;
-use crate::builtin::Builtin;
+use crate::args::{Args, Token};
+use crate::builtin::BuiltinType;
 use faccess::PathExt;
 use std::io::{self, Write};
+use std::iter::Peekable;
 use std::path::PathBuf;
 use std::process::{exit, Command, Stdio};
 use std::str::FromStr;
+use crate::cmd::{Expr, Parser};
 
 fn main() {
     loop {
@@ -18,14 +21,46 @@ fn main() {
         if input.trim().is_empty() {
             continue;
         }
+        let words = Args::new(input.trim());
 
-        execute(input);
+        execute(words);
     }
 }
 
-fn execute(raw: String) {
-    let mut words = Args::new(raw.trim());
+fn execute(args: Args) {
+    let mut peek_args = args.peekable();
+    let parser = Parser::new(peek_args);
+    match parser.compile() {
+        Ok(stmts) => {
+            for stmt in stmts {
+                match stmt {
+                    Expr::Cmd(cmd) => {
 
+                    }
+                    Expr::RedirectOut(_, _) => {}
+                    Expr::Error => panic!("Should not execute if there are any error tokens.")
+                }
+            }
+        }
+        Err(errors) => {
+            errors.iter().for_each(|e| println!("{}", e));
+        }
+    }
+    while let Some(arg) = peek_args.next() {
+        match arg {
+            Token::RedirectOutToFile => {
+                //Interpret syntax
+                todo!()
+            }
+            Token::Symbol(symbol) => {
+                let input = std::iter::from_fn(|| take_next_symbol(&mut peek_args));
+                execute_cmd(input);
+            }
+        }
+    }
+}
+
+fn execute_cmd<T: Iterator<Item = String>>(mut words: T) {
     let cmd = words.next().unwrap_or_default();
     if let Ok(builtin) = cmd.parse() {
         execute_builtin(builtin, words);
@@ -43,70 +78,17 @@ fn execute(raw: String) {
     }
 }
 
-fn execute_builtin(cmd: Builtin, mut args: Args) {
-    match cmd {
-        Builtin::Exit => exit(0),
-        Builtin::Echo => println!("{}", args.collect::<Vec<_>>().join(" ")),
-        Builtin::Pwd => {
-            if let Ok(current) = std::env::current_dir() {
-                println!("{}", current.display());
-            } else {
-                println!(
-                    "Current working directory either doesn't exist or you have insufficient privileges"
-                );
-            };
-        }
-        Builtin::Cd => {
-            if let Some(next) = args.next() {
-                let target_path = &create_path(&next);
 
-                if let Err(_) = std::env::set_current_dir(target_path) {
-                    println!("cd: {}: No such file or directory", target_path.display());
-                }
-            } else {
-                println!(
-                    "Cd requires at least one argument. If more than one are provided all but the first are discarded."
-                );
-            }
-        }
-        Builtin::Type => {
-            if let Some(next) = args.next() {
-                if Builtin::from_str(&next).is_ok() {
-                    println!("{} is a shell builtin", next);
-                } else {
-                    if let Some(path) = search_for_executable(&next) {
-                        println!("{}", path.display());
-                    } else {
-                        println!("{}: not found", next);
-                    }
-                }
-            } else {
-                println!(
-                    "Type requires at least one argument. If more than one are provided all but the first are discarded."
-                );
-            }
-        }
-    }
-}
-
-fn search_for_executable(name: &str) -> Option<PathBuf> {
-    let path_var = std::env::var("PATH").unwrap();
-
-    for path_str in path_var.split(":") {
-        let path = PathBuf::new().join(format!("{}/{}", path_str, name).as_str());
-        if path.executable() {
-            return Some(path);
+fn take_next_symbol<I>(it: &mut Peekable<I>) -> Option<String>
+where
+    I: Iterator<Item = Token>,
+{
+    // Check the next item without consuming
+    if matches!(it.peek(), Some(Token::Symbol(_))) {
+        // Now consume and extract the owned value
+        if let Some(Token::Symbol(s)) = it.next() {
+            return Some(s);
         }
     }
     None
-}
-
-fn create_path(string: &str) -> PathBuf {
-    let mut path = string.to_string();
-    #[cfg(target_family = "unix")]
-    {
-        let home = std::env::var("HOME").unwrap_or_default();
-        path = path.replace("~", home.as_str());
-    }
-    PathBuf::from(path)
 }
