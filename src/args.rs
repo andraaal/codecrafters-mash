@@ -10,6 +10,7 @@ pub(crate) struct Args<'a> {
 pub(crate) enum Token {
     Symbol(String),
     RedirectOutToFile,
+    Pipe,
 }
 
 impl Token {
@@ -17,6 +18,7 @@ impl Token {
         match self {
             Symbol(s) => s,
             RedirectOutToFile => ">".to_string(),
+            Token::Pipe => "|".to_string(),
         }
     }
 }
@@ -111,6 +113,11 @@ impl<'a> Args<'a> {
                                     self.pos += 2;
                                     return Some(RedirectOutToFile);
                                 }
+                                b'|' => {
+                                    self.pos += 1;
+                                    return Some(Token::Pipe);
+                                }
+
                                 _ => {}
                             }
                         }

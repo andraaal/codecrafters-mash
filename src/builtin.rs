@@ -1,7 +1,7 @@
-use crate::cmd::{ChildProcess, StreamSource, StreamTarget};
+use crate::cmd::{IntStreamSource, IntStreamTarget};
 use faccess::PathExt;
-use std::io::Write;
-use std::io::Error;
+use std::io::{Error, PipeWriter};
+use std::io::{ErrorKind, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -31,9 +31,9 @@ impl FromStr for BuiltinType {
 pub(crate) struct Builtin {
     typ: BuiltinType,
     args: Vec<String>,
-    stdin_target: StreamSource,
-    stdout_target: StreamTarget,
-    stderr_target: StreamTarget,
+    stdin_target: IntStreamSource,
+    stdout_target: IntStreamTarget,
+    stderr_target: IntStreamTarget,
 }
 
 pub(crate) struct BuiltinChild {
@@ -41,6 +41,7 @@ pub(crate) struct BuiltinChild {
     stdout: String,
     stdin: String,
     stderr: String,
+    executed: bool,
 }
 
 impl Builtin {
@@ -49,21 +50,21 @@ impl Builtin {
         Ok(Builtin {
             typ: builtin_typ,
             args: Vec::new(),
-            stdin_target: StreamSource::Inherit,
-            stdout_target: StreamTarget::InheritStdout,
-            stderr_target: StreamTarget::InheritStderr,
+            stdin_target: IntStreamSource::Inherit,
+            stdout_target: IntStreamTarget::InheritStdout,
+            stderr_target: IntStreamTarget::InheritStderr,
         })
     }
 
-    pub(crate) fn set_stdout(&mut self, target: StreamTarget) {
+    pub(crate) fn set_stdout(&mut self, target: IntStreamTarget) {
         self.stdout_target = target;
     }
 
-    pub(crate) fn set_stdin(&mut self, target: StreamSource) {
+    pub(crate) fn set_stdin(&mut self, target: IntStreamSource) {
         self.stdin_target = target;
     }
 
-    pub(crate) fn set_stderr(&mut self, target: StreamTarget) {
+    pub(crate) fn set_stderr(&mut self, target: IntStreamTarget) {
         self.stderr_target = target;
     }
 
@@ -76,20 +77,22 @@ impl Builtin {
     }
 }
 
+// TODO: Turn Builtin and BuiltinChild into one thing; executed differentiates them anyways
 impl BuiltinChild {
-
     fn new(inner: Builtin) -> Result<Self, Error> {
-        let mut child = BuiltinChild{
+        let mut child = BuiltinChild {
             inner,
             stdout: "".to_string(),
             stdin: "".to_string(),
             stderr: "".to_string(),
+            executed: false,
         };
-        child.execute()?;
+        // Note: No builtin actually uses stdin yet
         Ok(child)
     }
 
-    fn execute(&mut self) -> Result<(), Error> {
+    pub(crate) fn execute(&mut self) -> Result<(), Error> {
+        self.executed = true;
         match self.inner.typ {
             BuiltinType::Exit => std::process::exit(0),
             BuiltinType::Echo => {
@@ -138,12 +141,19 @@ impl BuiltinChild {
 
     fn write_stdout(&mut self, string: &str) -> Result<(), Error> {
         match self.inner.stdout_target {
-            StreamTarget::InheritStdout => std::io::stdout().write_all(string.as_bytes())?,
-            StreamTarget::InheritStderr => std::io::stderr().write_all(string.as_bytes())?,
-            StreamTarget::Pipe => self.stdout.push_str(string),
-            StreamTarget::Null => {}
-            StreamTarget::Child(ref mut target) => {
-                target.write_all(string.as_bytes())?;
+            IntStreamTarget::InheritStdout => std::io::stdout().write_all(string.as_bytes())?,
+            IntStreamTarget::InheritStderr => std::io::stderr().write_all(string.as_bytes())?,
+            IntStreamTarget::Pipe => self.stdout.push_str(string),
+            IntStreamTarget::Null => {}
+            IntStreamTarget::Child(ref mut target) => {
+                // SAFETY: Not really safe, this creates UB
+                unsafe {
+                    // TODO: This is undefined behavior and probably breaks things, I will fix it later
+                    let mut writer: PipeWriter = std::mem::replace(target, std::mem::zeroed()).into();
+                    writer.write_all(string.as_bytes())?;
+                    let zero = std::mem::replace(target, writer.into());
+                    std::mem::forget(zero);
+                }
             }
         }
 
@@ -152,12 +162,19 @@ impl BuiltinChild {
 
     fn write_stderr(&mut self, string: &str) -> Result<(), Error> {
         match self.inner.stderr_target {
-            StreamTarget::InheritStdout => std::io::stdout().write_all(string.as_bytes())?,
-            StreamTarget::InheritStderr => std::io::stderr().write_all(string.as_bytes())?,
-            StreamTarget::Pipe => self.stderr.push_str(string),
-            StreamTarget::Null => {}
-            StreamTarget::Child(ref mut target) => {
-                target.write_all(string.as_bytes())?;
+            IntStreamTarget::InheritStdout => std::io::stdout().write_all(string.as_bytes())?,
+            IntStreamTarget::InheritStderr => std::io::stderr().write_all(string.as_bytes())?,
+            IntStreamTarget::Pipe => self.stderr.push_str(string),
+            IntStreamTarget::Null => {}
+            IntStreamTarget::Child(ref mut target) => {
+                // SAFETY: Not really safe, this creates UB
+                unsafe {
+                    // TODO: This is undefined behavior and probably breaks things, I will fix it later
+                    let mut writer: PipeWriter = std::mem::replace(target, std::mem::zeroed()).into();
+                    writer.write_all(string.as_bytes())?;
+                    let zero = std::mem::replace(target, writer.into());
+                    std::mem::forget(zero);
+                }
             }
         }
 
@@ -186,14 +203,89 @@ impl BuiltinChild {
         PathBuf::from(path)
     }
 
-    pub(crate) fn write_to_stdin(&mut self, input: &str) {
-        self.stdin.push_str(input);
+    pub(crate) fn write_to_stdin(&mut self, input: &str) -> Result<(), Error> {
+        match self.inner.stdin_target {
+            IntStreamSource::Pipe => {
+                self.stdin.push_str(input);
+                Ok(())
+            }
+
+            _ => Err(Error::new(ErrorKind::BrokenPipe, "This stdin is not piped")),
+        }
     }
 
-    pub(crate) fn get_stdout(&mut self) -> String {
-        std::mem::take(&mut self.stdout)
+    pub(crate) fn get_stdout(&mut self) -> Result<String, Error> {
+        match self.inner.stdout_target {
+            IntStreamTarget::Pipe => {
+                Ok(std::mem::take(&mut self.stdout))
+            }
+
+            _ => Err(Error::new(ErrorKind::BrokenPipe, "This stdout is not piped")),
+        }
+
     }
-    pub(crate) fn get_stderr(&mut self) -> String {
-        std::mem::take(&mut self.stderr)
+    pub(crate) fn get_stderr(&mut self) -> Result<String, Error> {
+        match self.inner.stderr_target {
+            IntStreamTarget::Pipe => {
+                Ok(std::mem::take(&mut self.stderr))
+            }
+
+            _ => Err(Error::new(ErrorKind::BrokenPipe, "This stderr is not piped")),
+        }
+    }
+
+    pub(crate) fn redirect_stdout(&mut self, target: IntStreamTarget) -> Result<(), Error> {
+        if matches!(target, IntStreamTarget::Pipe) {
+            return Ok(());
+        }
+        match self.inner.stdout_target {
+            IntStreamTarget::Pipe => {
+                if !self.executed {
+                    self.inner.stdout_target = target;
+                    Ok(())
+                } else {
+                    Err(Error::new(ErrorKind::Other, "Can't redirect stdout: Builtin has already been executed"))
+                }
+            }
+            _ => {
+                Err(Error::new(ErrorKind::BrokenPipe, "Stdout is not piped"))
+            }
+        }
+    }
+
+    pub(crate) fn redirect_stderr(&mut self, target: IntStreamTarget) -> Result<(), Error> {
+        if matches!(target, IntStreamTarget::Pipe) {
+            return Ok(());
+        }
+        match self.inner.stderr_target {
+            IntStreamTarget::Pipe => {
+                if !self.executed {
+                    self.inner.stderr_target = target;
+                    Ok(())
+                } else {
+                    Err(Error::new(ErrorKind::Other, "Can't redirect stderr: Builtin has already been executed"))
+                }
+            }
+            _ => {
+                Err(Error::new(ErrorKind::BrokenPipe, "Stderr is not piped"))
+            }
+        }
+    }
+
+    pub(crate) fn redirect_stdin(&mut self, target: IntStreamSource) -> Result<(), Error> {
+        if matches!(target, IntStreamSource::Pipe) {
+            return Ok(());
+        }
+        match self.inner.stdin_target {
+            IntStreamSource::Pipe => {
+                if !self.executed {
+                    self.inner.stdin_target = target;
+                    Ok(())
+                } else {
+                    Err(Error::new(ErrorKind::Other, "Can't redirect stdin: Has already been written to"))
+                }
+            }
+            _ => Err(Error::new(ErrorKind::BrokenPipe, "Stdin is not piped"))
+        }
     }
 }

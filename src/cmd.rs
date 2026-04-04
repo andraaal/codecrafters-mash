@@ -1,7 +1,8 @@
 use crate::args::{Args, Token};
 use crate::builtin::{Builtin, BuiltinChild};
-use std::io::Error;
+use std::io::{pipe, Error, PipeReader, PipeWriter, Read, Write};
 use std::iter::Peekable;
+use std::os::fd::OwnedFd;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 
 pub(crate) struct Parser<'a> {
@@ -38,7 +39,7 @@ impl<'a> Parser<'_> {
     }
 
     // TODO: implement precedence (and associativity)
-    fn parse_precedence(&mut self, _min_prec: i32) -> Expr {
+    fn parse_precedence(&mut self, min_prec: u32) -> Expr {
         if let Some(prefix_tk) = self.next_token() {
             let mut lhs;
             if let Some(parselet) = Self::prefix_parselet(&prefix_tk) {
@@ -48,10 +49,10 @@ impl<'a> Parser<'_> {
                 return Expr::Error;
             }
 
-            while let Some(infix_tk) = self.peek_token()
-                && true
-            {
-                if let Some(parselet) = Self::infix_parselet(&infix_tk) {
+            while let Some(infix_tk) = self.peek_token() {
+                if let Some(parselet) = Self::infix_parselet(&infix_tk)
+                    && parselet.precedence > min_prec
+                {
                     let tk = self.next_token().unwrap();
                     lhs = (parselet.parse)(self, tk, lhs);
                 } else {
@@ -108,6 +109,13 @@ impl<'a> Parser<'_> {
                     }
                 },
             },
+            Token::Pipe => InfixParselet {
+                precedence: 0,
+                parse: |parser, _token, lhs| {
+                    let rhs = parser.parse_precedence(0);
+                    Expr::Pipe(Box::new(lhs), Box::new(rhs))
+                },
+            },
             _ => return None,
         };
         Some(tp)
@@ -148,12 +156,13 @@ struct InfixParselet {
 pub(crate) enum Expr {
     Cmd(Cmd),
     RedirectOut(Box<Expr>, String),
+    Pipe(Box<Expr>, Box<Expr>),
     Error, // Error is just here to be able to return something. I couldn't be bothered to write proper error handling (yet).
 }
 
 // Define the target of the streams here; then start the process to convert into a ChildProcess
 pub(crate) enum Cmd {
-    External(Command),
+    External (Command),
     Builtin(Builtin),
 }
 
@@ -163,20 +172,35 @@ pub(crate) enum ChildProcess {
     BuiltinChild(BuiltinChild),
 }
 
-pub(crate) enum StreamTarget {
+pub(crate) enum IntStreamTarget {
+    // Internal Stream Target
     InheritStdout,     // Piped to the Stdout of the parent process
     InheritStderr,     // Piped to the Stderr of the parent process
     Pipe,              // Can be accessed in the child created by spawn
     Null,              // To the void
-    Child(ChildStdin), // Piped to the Stdin of the child
+    Child(OwnedFd), // Piped to the Stdin of the child
 }
 
-pub(crate) enum StreamSource {
+pub(crate) enum IntStreamSource {
+    // Internal Stream Source
     Inherit,                  // Piped from the Stdin of the parent process
     Pipe,                     // Can be accessed in the child created by spawn
     Null,                     // To the void
-    ChildStdout(ChildStdout), // Piped from the Stdout of the child
-    ChildStderr(ChildStderr), // Piped from the Stdin of the child
+    ChildStdout(OwnedFd), // Piped from the Stdout of the child
+    ChildStderr(OwnedFd), // Piped from the Stdin of the child
+}
+
+pub(crate) enum StreamTarget<'a> {
+    InheritStdout,
+    InheritStderr,
+    Null,
+    Child(&'a mut ChildProcess),
+}
+pub(crate) enum StreamSource<'a> {
+    Inherit,
+    Null,
+    ChildStdout(&'a mut ChildProcess),
+    ChildStderr(&'a mut ChildProcess),
 }
 
 impl Cmd {
@@ -193,15 +217,85 @@ impl Cmd {
             Cmd::External(command) => {
                 let stdio: Stdio = match target {
                     StreamSource::Inherit => Stdio::inherit(),
-                    StreamSource::Pipe => Stdio::piped(),
                     StreamSource::Null => Stdio::null(),
-                    StreamSource::ChildStdout(child) => child.into(),
-                    StreamSource::ChildStderr(child) => child.into(),
+                    StreamSource::ChildStdout(child) => match child {
+                        ChildProcess::ExternalChild(external) => {
+                            if let Some(stdout) = external.stdout.take() {
+                                stdout.into()
+                            } else {
+                                return Err(Error::new(
+                                    std::io::ErrorKind::BrokenPipe,
+                                    "No stdout available",
+                                ));
+                            }
+                        }
+                        ChildProcess::BuiltinChild(builtin) => {
+                            // use pipe() to create a pipe and turn it into a Stdio and set it in the builtin
+                            let (reader, writer) = pipe()?;
+                            builtin.redirect_stdout(IntStreamTarget::Child(writer.into()))?;
+                            reader.into()
+                        }
+                    },
+                    StreamSource::ChildStderr(child) => match child {
+                        ChildProcess::ExternalChild(external) => {
+                            if let Some(stderr) = external.stderr.take() {
+                                stderr.into()
+                            } else {
+                                return Err(Error::new(
+                                    std::io::ErrorKind::BrokenPipe,
+                                    "No stderr available",
+                                ));
+                            }
+                        }
+                        ChildProcess::BuiltinChild(builtin) => {
+                            let (reader, writer) = pipe()?;
+                            builtin.redirect_stderr(IntStreamTarget::Child(writer.into()))?;
+                            reader.into()
+                        }
+                    },
                 };
                 command.stdin(stdio);
             }
             Cmd::Builtin(builtin) => {
-                builtin.set_stdin(target);
+                let source = match target {
+                    StreamSource::Inherit => IntStreamSource::Inherit,
+                    StreamSource::Null => IntStreamSource::Null,
+                    StreamSource::ChildStdout(child) => {
+                        match child {
+                            ChildProcess::ExternalChild(external) => {
+                                if let Some(stdout) = external.stdout.take() {
+                                    IntStreamSource::ChildStdout(stdout.into())
+                                } else {
+                                    return Err(Error::new(
+                                        std::io::ErrorKind::BrokenPipe,
+                                        "No stdout available",
+                                    ));
+                                }
+                            }
+                            ChildProcess::BuiltinChild(_builtin) => {
+                                todo!("Piping from builtin to builtin not supported yet")
+                            }
+                        }
+                    }
+                    StreamSource::ChildStderr(child) => {
+                        match child {
+                            ChildProcess::ExternalChild(external) => {
+                                if let Some(stderr) = external.stderr.take() {
+                                    IntStreamSource::ChildStderr(stderr.into())
+                                } else {
+                                    return Err(Error::new(
+                                        std::io::ErrorKind::BrokenPipe,
+                                        "No stderr available",
+                                    ));
+                                }
+                            }
+                            ChildProcess::BuiltinChild(_builtin) => {
+                                todo!("Piping from builtin to builtin not supported yet")
+                            }
+                        }
+                    }
+                };
+                builtin.set_stdin(source);
             }
         }
         Ok(())
@@ -213,9 +307,24 @@ impl Cmd {
                 let stdio: Stdio = match target {
                     StreamTarget::InheritStdout => Stdio::inherit(),
                     StreamTarget::InheritStderr => std::io::stderr().into(),
-                    StreamTarget::Pipe => Stdio::piped(),
                     StreamTarget::Null => Stdio::null(),
-                    StreamTarget::Child(child) => child.into(),
+                    StreamTarget::Child(child) => match child {
+                        ChildProcess::ExternalChild(external) => {
+                            if let Some(stdin) = external.stdin.take() {
+                                stdin.into()
+                            } else {
+                                return Err(Error::new(
+                                    std::io::ErrorKind::BrokenPipe,
+                                    "No stdin available",
+                                ));
+                            }
+                        }
+                        ChildProcess::BuiltinChild(builtin) => {
+                            let (reader, writer) = pipe()?;
+
+
+                        }
+                    }
                 };
                 command.stdout(stdio);
             }
@@ -226,15 +335,15 @@ impl Cmd {
         Ok(())
     }
 
-    pub(crate) fn set_stderr(&mut self, target: StreamTarget) -> Result<(), Error> {
+    pub(crate) fn set_stderr(&mut self, target: IntStreamTarget) -> Result<(), Error> {
         match self {
             Cmd::External(command) => {
                 let stdio: Stdio = match target {
-                    StreamTarget::InheritStdout => std::io::stdout().into(),
-                    StreamTarget::InheritStderr => Stdio::inherit(),
-                    StreamTarget::Pipe => Stdio::piped(),
-                    StreamTarget::Null => Stdio::null(),
-                    StreamTarget::Child(child) => child.into(),
+                    IntStreamTarget::InheritStdout => std::io::stdout().into(),
+                    IntStreamTarget::InheritStderr => Stdio::inherit(),
+                    IntStreamTarget::Pipe => Stdio::piped(),
+                    IntStreamTarget::Null => Stdio::null(),
+                    IntStreamTarget::Child(child) => child.into(),
                 };
                 command.stderr(stdio);
             }
@@ -247,12 +356,8 @@ impl Cmd {
 
     pub(crate) fn spawn(self) -> Result<ChildProcess, Error> {
         match self {
-            Cmd::External(mut command) => {
-                Ok(ChildProcess::ExternalChild(command.spawn()?))
-            }
-            Cmd::Builtin(builtin) => {
-                Ok(ChildProcess::BuiltinChild(builtin.spawn()?))
-            }
+            Cmd::External(mut command) => Ok(ChildProcess::ExternalChild(command.spawn()?)),
+            Cmd::Builtin(builtin) => Ok(ChildProcess::BuiltinChild(builtin.spawn()?)),
         }
     }
 
