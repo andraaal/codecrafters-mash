@@ -1,9 +1,10 @@
 use crate::args::{Args, Token};
-use crate::builtin::{Builtin, BuiltinChild};
-use std::io::{pipe, Error, PipeReader, PipeWriter, Read, Write};
+use crate::builtin::Builtin;
+use std::cell::RefCell;
+use std::io::{pipe, Error, PipeReader, PipeWriter};
 use std::iter::Peekable;
-use std::os::fd::OwnedFd;
-use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Command, Stdio};
+use std::rc::Rc;
 
 pub(crate) struct Parser<'a> {
     tokens: Peekable<Args<'a>>,
@@ -160,47 +161,40 @@ pub(crate) enum Expr {
     Error, // Error is just here to be able to return something. I couldn't be bothered to write proper error handling (yet).
 }
 
-// Define the target of the streams here; then start the process to convert into a ChildProcess
+// Define the target of the streams here; then start the process to convert into a Cmd
 pub(crate) enum Cmd {
-    External (Command),
+    External(Command),
     Builtin(Builtin),
 }
 
-// Control the ChildProcess with wait(), ... and access piped streams
-pub(crate) enum ChildProcess {
-    ExternalChild(Child),
-    BuiltinChild(BuiltinChild),
-}
-
-pub(crate) enum IntStreamTarget {
+pub(crate) enum BuiltinStreamTarget {
     // Internal Stream Target
-    InheritStdout,     // Piped to the Stdout of the parent process
-    InheritStderr,     // Piped to the Stderr of the parent process
-    Pipe,              // Can be accessed in the child created by spawn
-    Null,              // To the void
-    Child(OwnedFd), // Piped to the Stdin of the child
+    InheritStdout,                    // Piped to the Stdout of the parent process
+    InheritStderr,                    // Piped to the Stderr of the parent process
+    BuiltinPipe(Rc<RefCell<String>>), // Doesn't need to be implemented yet: simply create todo!
+    Null,                             // To the void
+    Pipe(PipeWriter),                 // Piped to the Stdin of the child
 }
 
-pub(crate) enum IntStreamSource {
+pub(crate) enum BuiltinStreamSource {
     // Internal Stream Source
-    Inherit,                  // Piped from the Stdin of the parent process
-    Pipe,                     // Can be accessed in the child created by spawn
-    Null,                     // To the void
-    ChildStdout(OwnedFd), // Piped from the Stdout of the child
-    ChildStderr(OwnedFd), // Piped from the Stdin of the child
+    Inherit,                          // Piped from the Stdin of the parent process
+    BuiltinPipe(Rc<RefCell<String>>), // Doesn't need to be implemented yet: simply create todo!
+    Null,                             // From the void
+    Pipe(PipeReader),                 // Get input from this pipe
 }
 
 pub(crate) enum StreamTarget<'a> {
     InheritStdout,
     InheritStderr,
     Null,
-    Child(&'a mut ChildProcess),
+    Child(&'a mut Cmd),
 }
 pub(crate) enum StreamSource<'a> {
     Inherit,
     Null,
-    ChildStdout(&'a mut ChildProcess),
-    ChildStderr(&'a mut ChildProcess),
+    ChildStdout(&'a mut Cmd),
+    ChildStderr(&'a mut Cmd),
 }
 
 impl Cmd {
@@ -218,82 +212,57 @@ impl Cmd {
                 let stdio: Stdio = match target {
                     StreamSource::Inherit => Stdio::inherit(),
                     StreamSource::Null => Stdio::null(),
-                    StreamSource::ChildStdout(child) => match child {
-                        ChildProcess::ExternalChild(external) => {
-                            if let Some(stdout) = external.stdout.take() {
-                                stdout.into()
-                            } else {
-                                return Err(Error::new(
-                                    std::io::ErrorKind::BrokenPipe,
-                                    "No stdout available",
-                                ));
+                    StreamSource::ChildStdout(child) => {
+                        let (reader, writer): (PipeReader, PipeWriter) = pipe()?;
+                        match child {
+                            Cmd::External(external) => {
+                                external.stdout(writer);
+                            }
+                            Cmd::Builtin(builtin) => {
+                                builtin.set_stdout(BuiltinStreamTarget::Pipe(writer));
                             }
                         }
-                        ChildProcess::BuiltinChild(builtin) => {
-                            // use pipe() to create a pipe and turn it into a Stdio and set it in the builtin
-                            let (reader, writer) = pipe()?;
-                            builtin.redirect_stdout(IntStreamTarget::Child(writer.into()))?;
-                            reader.into()
-                        }
-                    },
-                    StreamSource::ChildStderr(child) => match child {
-                        ChildProcess::ExternalChild(external) => {
-                            if let Some(stderr) = external.stderr.take() {
-                                stderr.into()
-                            } else {
-                                return Err(Error::new(
-                                    std::io::ErrorKind::BrokenPipe,
-                                    "No stderr available",
-                                ));
+                        reader.into()
+                    }
+                    StreamSource::ChildStderr(child) => {
+                        let (reader, writer): (PipeReader, PipeWriter) = pipe()?;
+                        match child {
+                            Cmd::External(external) => {
+                                external.stderr(writer);
+                            }
+                            Cmd::Builtin(builtin) => {
+                                builtin.set_stderr(BuiltinStreamTarget::Pipe(writer));
                             }
                         }
-                        ChildProcess::BuiltinChild(builtin) => {
-                            let (reader, writer) = pipe()?;
-                            builtin.redirect_stderr(IntStreamTarget::Child(writer.into()))?;
-                            reader.into()
-                        }
-                    },
+                        reader.into()
+                    }
                 };
                 command.stdin(stdio);
             }
             Cmd::Builtin(builtin) => {
                 let source = match target {
-                    StreamSource::Inherit => IntStreamSource::Inherit,
-                    StreamSource::Null => IntStreamSource::Null,
-                    StreamSource::ChildStdout(child) => {
-                        match child {
-                            ChildProcess::ExternalChild(external) => {
-                                if let Some(stdout) = external.stdout.take() {
-                                    IntStreamSource::ChildStdout(stdout.into())
-                                } else {
-                                    return Err(Error::new(
-                                        std::io::ErrorKind::BrokenPipe,
-                                        "No stdout available",
-                                    ));
-                                }
-                            }
-                            ChildProcess::BuiltinChild(_builtin) => {
-                                todo!("Piping from builtin to builtin not supported yet")
-                            }
+                    StreamSource::Inherit => BuiltinStreamSource::Inherit,
+                    StreamSource::Null => BuiltinStreamSource::Null,
+                    StreamSource::ChildStdout(child) => match child {
+                        Cmd::External(external) => {
+                            let (reader, writer): (PipeReader, PipeWriter) = pipe()?;
+                            external.stdout(writer);
+                            BuiltinStreamSource::Pipe(reader)
                         }
-                    }
-                    StreamSource::ChildStderr(child) => {
-                        match child {
-                            ChildProcess::ExternalChild(external) => {
-                                if let Some(stderr) = external.stderr.take() {
-                                    IntStreamSource::ChildStderr(stderr.into())
-                                } else {
-                                    return Err(Error::new(
-                                        std::io::ErrorKind::BrokenPipe,
-                                        "No stderr available",
-                                    ));
-                                }
-                            }
-                            ChildProcess::BuiltinChild(_builtin) => {
-                                todo!("Piping from builtin to builtin not supported yet")
-                            }
+                        Cmd::Builtin(_builtin) => {
+                            todo!("Piping from builtin to builtin not supported yet")
                         }
-                    }
+                    },
+                    StreamSource::ChildStderr(child) => match child {
+                        Cmd::External(external) => {
+                            let (reader, writer): (PipeReader, PipeWriter) = pipe()?;
+                            external.stderr(writer);
+                            BuiltinStreamSource::Pipe(reader)
+                        }
+                        Cmd::Builtin(_builtin) => {
+                            todo!("Piping from builtin to builtin not supported yet")
+                        }
+                    },
                 };
                 builtin.set_stdin(source);
             }
@@ -308,57 +277,97 @@ impl Cmd {
                     StreamTarget::InheritStdout => Stdio::inherit(),
                     StreamTarget::InheritStderr => std::io::stderr().into(),
                     StreamTarget::Null => Stdio::null(),
-                    StreamTarget::Child(child) => match child {
-                        ChildProcess::ExternalChild(external) => {
-                            if let Some(stdin) = external.stdin.take() {
-                                stdin.into()
-                            } else {
-                                return Err(Error::new(
-                                    std::io::ErrorKind::BrokenPipe,
-                                    "No stdin available",
-                                ));
+                    StreamTarget::Child(child) => {
+                        let (reader, writer): (PipeReader, PipeWriter) = pipe()?;
+                        match child {
+                            Cmd::External(external) => {
+                                external.stdin(reader);
+                            }
+                            Cmd::Builtin(builtin) => {
+                                builtin.set_stdin(BuiltinStreamSource::Pipe(reader));
                             }
                         }
-                        ChildProcess::BuiltinChild(builtin) => {
-                            let (reader, writer) = pipe()?;
-
-
-                        }
+                        writer.into()
                     }
                 };
                 command.stdout(stdio);
             }
             Cmd::Builtin(builtin) => {
-                builtin.set_stdout(target);
+                let mapped = match target {
+                    StreamTarget::InheritStdout => BuiltinStreamTarget::InheritStdout,
+                    StreamTarget::InheritStderr => BuiltinStreamTarget::InheritStderr,
+                    StreamTarget::Null => BuiltinStreamTarget::Null,
+                    StreamTarget::Child(child) => match child {
+                        Cmd::External(external) => {
+                            let (reader, writer): (PipeReader, PipeWriter) = pipe()?;
+                            external.stdin(reader);
+                            BuiltinStreamTarget::Pipe(writer)
+                        }
+                        Cmd::Builtin(_builtin) => {
+                            todo!("Piping from builtin to builtin not supported yet")
+                        }
+                    },
+                };
+                builtin.set_stdout(mapped);
             }
         }
         Ok(())
     }
 
-    pub(crate) fn set_stderr(&mut self, target: IntStreamTarget) -> Result<(), Error> {
+    pub(crate) fn set_stderr(&mut self, target: StreamTarget) -> Result<(), Error> {
         match self {
             Cmd::External(command) => {
                 let stdio: Stdio = match target {
-                    IntStreamTarget::InheritStdout => std::io::stdout().into(),
-                    IntStreamTarget::InheritStderr => Stdio::inherit(),
-                    IntStreamTarget::Pipe => Stdio::piped(),
-                    IntStreamTarget::Null => Stdio::null(),
-                    IntStreamTarget::Child(child) => child.into(),
+                    StreamTarget::InheritStdout => std::io::stdout().into(),
+                    StreamTarget::InheritStderr => Stdio::inherit(),
+                    StreamTarget::Null => Stdio::null(),
+                    StreamTarget::Child(child) => {
+                        let (reader, writer): (PipeReader, PipeWriter) = pipe()?;
+                        match child {
+                            Cmd::External(external) => {
+                                external.stdin(reader);
+                            }
+                            Cmd::Builtin(builtin) => {
+                                builtin.set_stdin(BuiltinStreamSource::Pipe(reader));
+                            }
+                        }
+                        writer.into()
+                    }
                 };
                 command.stderr(stdio);
             }
             Cmd::Builtin(builtin) => {
-                builtin.set_stderr(target);
+                let mapped = match target {
+                    StreamTarget::InheritStdout => BuiltinStreamTarget::InheritStdout,
+                    StreamTarget::InheritStderr => BuiltinStreamTarget::InheritStderr,
+                    StreamTarget::Null => BuiltinStreamTarget::Null,
+                    StreamTarget::Child(child) => match child {
+                        Cmd::External(external) => {
+                            let (reader, writer): (PipeReader, PipeWriter) = pipe()?;
+                            external.stdin(reader);
+                            BuiltinStreamTarget::Pipe(writer)
+                        }
+                        Cmd::Builtin(_builtin) => {
+                            todo!("Piping from builtin to builtin not supported yet")
+                        }
+                    },
+                };
+                builtin.set_stderr(mapped);
             }
         }
         Ok(())
     }
 
-    pub(crate) fn spawn(self) -> Result<ChildProcess, Error> {
+    pub(crate) fn spawn(&mut self) -> Result<(), Error> {
         match self {
-            Cmd::External(mut command) => Ok(ChildProcess::ExternalChild(command.spawn()?)),
-            Cmd::Builtin(builtin) => Ok(ChildProcess::BuiltinChild(builtin.spawn()?)),
-        }
+            Cmd::External(command) => {
+                command.spawn()?;
+            }
+            Cmd::Builtin(builtin) => {
+                builtin.execute()?;
+            }
+        };
+        Ok(())
     }
 
     pub(crate) fn set_args(&mut self, args: Vec<String>) {
@@ -369,42 +378,6 @@ impl Cmd {
             Cmd::Builtin(builtin) => {
                 builtin.set_args(args);
             }
-        }
-    }
-}
-
-impl ChildProcess {
-    pub(crate) fn wait(&mut self) -> Result<(), Error> {
-        match self {
-            ChildProcess::ExternalChild(command) => {
-                command.wait()?;
-                Ok(())
-            }
-            ChildProcess::BuiltinChild(_) => {
-                // Nothing to do here; builtins are executed synchronously when the child is constructed
-                Ok(())
-            }
-        }
-    }
-    pub(crate) fn get_builtin_stdout(&mut self) -> Result<String, ()> {
-        if let ChildProcess::BuiltinChild(child) = self {
-            Ok(child.get_stdout())
-        } else {
-            Err(())
-        }
-    }
-    pub(crate) fn get_builtin_stderr(&mut self) -> Result<String, ()> {
-        if let ChildProcess::BuiltinChild(child) = self {
-            Ok(child.get_stderr())
-        } else {
-            Err(())
-        }
-    }
-    pub(crate) fn write_to_builtin_stdin(&mut self, input: &str) -> Result<(), ()> {
-        if let ChildProcess::BuiltinChild(child) = self {
-            Ok(child.write_to_stdin(input))
-        } else {
-            Err(())
         }
     }
 }

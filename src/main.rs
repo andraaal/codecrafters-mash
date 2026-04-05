@@ -1,15 +1,10 @@
 mod args;
 mod builtin;
 mod cmd;
-mod pipe;
 
-use crate::args::{Args, Token};
-use crate::cmd::{ChildProcess, Cmd, Expr, Parser};
-use faccess::PathExt;
+use crate::args::Args;
+use crate::cmd::{Cmd, Expr, Parser, StreamSource, StreamTarget};
 use std::io::{self, Write};
-use std::iter::Peekable;
-use std::process::{Command, Stdio};
-use std::str::FromStr;
 
 fn main() {
     loop {
@@ -26,7 +21,7 @@ fn main() {
         match parser.compile() {
             Ok(exprs) => {
                 for expr in exprs {
-                    execute_stmt(expr);
+                    execute(expr).unwrap().spawn().unwrap();
                 }
             }
             Err(errs) => {
@@ -38,24 +33,25 @@ fn main() {
     }
 }
 
-fn execute_stmt(stmt: Expr) {
-        match stmt {
-            Expr::Cmd(cmd) => {}
-            Expr::RedirectOut(_, _) => {execute_cmd(stmt);}
-            Expr::Error => panic!("Compiler's fault: Should not execute if there are any error tokens."),
-            Expr::Pipe(_, _) => {
-                execute_cmd(stmt);
-            }
+fn execute(stmt: Expr) -> Result<Cmd, std::io::Error> {
+    match stmt {
+        Expr::Cmd(cmd) => {
+            Ok(cmd)
         }
-}
-
-fn execute_cmd(expr: Expr) -> Cmd {
-    match expr {
-        Expr::Cmd(cmd) => {cmd}
-        Expr::RedirectOut(_, _) => {panic!("Not yet implemented")}
+        Expr::RedirectOut(_, _) => {
+            todo!()
+        }
+        Expr::Error => {
+            panic!("Compiler's fault: Should not execute if there are any error tokens.")
+        }
         Expr::Pipe(lhs, rhs) => {
-
+            let mut left_cmd = execute(*lhs)?;
+            let mut right_cmd = execute(*rhs)?;
+            left_cmd.set_stdout(StreamTarget::Child(&mut right_cmd))?;
+            left_cmd.spawn()?;
+            Ok(right_cmd)
         }
-        Expr::Error => {}
     }
 }
+
+
