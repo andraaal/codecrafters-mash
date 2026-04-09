@@ -3,10 +3,21 @@ mod builtin;
 mod cmd;
 
 use crate::args::Args;
-use crate::cmd::{Cmd, Expr, Parser, StreamSource, StreamTarget};
+use crate::cmd::{Cmd, Expr, Parser, StreamTarget};
 use std::io::{self, Write};
 
 fn main() {
+    println!("$$\\      $$\\  $$$$$$\\   $$$$$$\\  $$\\   $$\\
+$$$\\    $$$ |$$  __$$\\ $$  __$$\\ $$ |  $$ |
+$$$$\\  $$$$ |$$ /  $$ |$$ /  \\__|$$ |  $$ |
+$$\\$$\\$$ $$ |$$$$$$$$ |\\$$$$$$\\  $$$$$$$$ |
+$$ \\$$$  $$ |$$  __$$ | \\____$$\\ $$  __$$ |
+$$ |\\$  /$$ |$$ |  $$ |$$\\   $$ |$$ |  $$ |
+$$ | \\_/ $$ |$$ |  $$ |\\$$$$$$  |$$ |  $$ |
+\\__|     \\__|\\__|  \\__| \\______/ \\__|  \\__|
+
+
+");
     loop {
         print!("$ ");
         io::stdout().flush().unwrap();
@@ -21,7 +32,9 @@ fn main() {
         match parser.compile() {
             Ok(exprs) => {
                 for expr in exprs {
-                    execute(expr).unwrap().spawn().unwrap();
+                    if let Err(err) = execute(expr).unwrap().wait() {
+                        println!("{}", err);
+                    }
                 }
             }
             Err(errs) => {
@@ -48,7 +61,9 @@ fn execute(stmt: Expr) -> Result<Cmd, std::io::Error> {
             let mut left_cmd = execute(*lhs)?;
             let mut right_cmd = execute(*rhs)?;
             left_cmd.set_stdout(StreamTarget::Child(&mut right_cmd))?;
-            left_cmd.spawn()?;
+            if let Err(err) = left_cmd.wait() {
+                println!("{}", err);
+            }
             Ok(right_cmd)
         }
     }

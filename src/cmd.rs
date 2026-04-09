@@ -46,7 +46,7 @@ impl<'a> Parser<'_> {
             if let Some(parselet) = Self::prefix_parselet(&prefix_tk) {
                 lhs = (parselet.parse)(self, prefix_tk);
             } else {
-                self.errors.push("Invalid start of expression".to_string());
+                self.errors.push(format!("Invalid start of expression: {:?}", prefix_tk));
                 return Expr::Error;
             }
 
@@ -62,7 +62,7 @@ impl<'a> Parser<'_> {
             }
             lhs
         } else {
-            self.errors.push("Invalid start of expression".to_string());
+            self.errors.push("Invalid start of expression: EOF".to_string());
             Expr::Error
         }
     }
@@ -111,9 +111,9 @@ impl<'a> Parser<'_> {
                 },
             },
             Token::Pipe => InfixParselet {
-                precedence: 0,
+                precedence: 5,
                 parse: |parser, _token, lhs| {
-                    let rhs = parser.parse_precedence(0);
+                    let rhs = parser.parse_precedence(5);
                     Expr::Pipe(Box::new(lhs), Box::new(rhs))
                 },
             },
@@ -202,6 +202,8 @@ impl Cmd {
         if let Ok(builtin) = Builtin::new(name) {
             Cmd::Builtin(builtin)
         } else {
+            let mut cmd = Command::new(name);
+            cmd.stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
             Cmd::External(Command::new(name))
         }
     }
@@ -273,7 +275,7 @@ impl Cmd {
     pub(crate) fn set_stdout(&mut self, target: StreamTarget) -> Result<(), Error> {
         match self {
             Cmd::External(command) => {
-                let stdio: Stdio = match target {
+                let stdio = match target {
                     StreamTarget::InheritStdout => Stdio::inherit(),
                     StreamTarget::InheritStderr => std::io::stderr().into(),
                     StreamTarget::Null => Stdio::null(),
@@ -358,10 +360,10 @@ impl Cmd {
         Ok(())
     }
 
-    pub(crate) fn spawn(&mut self) -> Result<(), Error> {
+    pub(crate) fn wait(&mut self) -> Result<(), Error> {
         match self {
             Cmd::External(command) => {
-                command.spawn()?;
+                command.output()?;
             }
             Cmd::Builtin(builtin) => {
                 builtin.execute()?;
