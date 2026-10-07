@@ -1,24 +1,38 @@
-use std::fmt::Display;
-use crate::args::Token::{RedirectOutToFile, Symbol};
+use crate::args::Token::{
+    AppendErrToFile, AppendOutToFile, OverwriteErrToFile, OverwriteOutToFile, Symbol,
+};
 
+/// Tokenizes shell input into `Token`s.
 pub(crate) struct Args<'a> {
     raw: &'a str,
     pos: usize,
 }
 
+/// Tokens produced by the shell tokenizer.
+///
+/// `Symbol` represents a command name or argument, while the other variants
+/// capture shell syntax such as redirects and pipes.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Token {
     Symbol(String),
-    RedirectOutToFile,
+    OverwriteOutToFile,
+    OverwriteErrToFile,
+    AppendOutToFile,
+    AppendErrToFile,
+    InFromFile,
     Pipe,
 }
 
 impl Token {
-    pub(crate) fn to_text(self) -> String {
+    pub(crate) fn as_text(&self) -> String {
         match self {
-            Symbol(s) => s,
-            RedirectOutToFile => ">".to_string(),
+            Token::Symbol(s) => s.clone(),
+            Token::OverwriteOutToFile => ">".to_string(),
             Token::Pipe => "|".to_string(),
+            Token::OverwriteErrToFile => "2>".to_string(),
+            Token::AppendOutToFile => ">>".to_string(),
+            Token::AppendErrToFile => "2>>".to_string(),
+            Token::InFromFile => "<".to_string(),
         }
     }
 }
@@ -26,12 +40,14 @@ impl Token {
 impl<'a> Iterator for Args<'a> {
     type Item = Token;
 
+    /// Gets the next Token or None if the iterator is finished.
     fn next(&mut self) -> Option<Self::Item> {
         self.next_token()
     }
 }
 
 impl<'a> Args<'a> {
+    /// Creates a new iterator from a str.
     pub(crate) fn new(raw: &'a str) -> Self {
         Self { raw, pos: 0 }
     }
@@ -52,7 +68,7 @@ impl<'a> Args<'a> {
                     if self.pos + 1 < len {
                         let n = bytes[self.pos + 1];
                         // Escape everything outside of quotes; escape only certain characters inside double quotes
-                        if quotes == None
+                        if quotes.is_none()
                             || n == b'\\'
                             || n == b'"'
                             || n == b'$'
@@ -106,12 +122,31 @@ impl<'a> Args<'a> {
                         if segments.is_empty() {
                             match b {
                                 b'>' => {
-                                    self.pos += 1;
-                                    return Some(RedirectOutToFile);
+                                    return if bytes.get(self.pos + 1) == Some(&b'>') {
+                                        self.pos += 2;
+                                        Some(AppendOutToFile)
+                                    } else {
+                                        self.pos += 1;
+                                        Some(OverwriteOutToFile)
+                                    };
                                 }
-                                b'1' if bytes[self.pos+1] == b'>' => {
-                                    self.pos += 2;
-                                    return Some(RedirectOutToFile);
+                                b'1' if bytes.get(self.pos + 1) == Some(&b'>') => {
+                                    return if bytes.get(self.pos + 2) == Some(&b'>') {
+                                        self.pos += 3;
+                                        Some(AppendOutToFile)
+                                    } else {
+                                        self.pos += 2;
+                                        Some(OverwriteOutToFile)
+                                    };
+                                }
+                                b'2' if bytes.get(self.pos + 1) == Some(&b'>') => {
+                                    return if bytes.get(self.pos + 2) == Some(&b'>') {
+                                        self.pos += 3;
+                                        Some(AppendErrToFile)
+                                    } else {
+                                        self.pos += 2;
+                                        Some(OverwriteErrToFile)
+                                    };
                                 }
                                 b'|' => {
                                     self.pos += 1;
@@ -122,7 +157,6 @@ impl<'a> Args<'a> {
                             }
                         }
                     }
-
                 }
             }
 
