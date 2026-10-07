@@ -1,5 +1,5 @@
 use crate::cmd::{BuiltinStreamSource, BuiltinStreamTarget};
-use crate::history::{load_history, save_history};
+use crate::history::{append_history, load_history, save_history};
 use crate::{ShellState, exit_shell};
 use faccess::PathExt;
 use rustyline::history::History;
@@ -160,8 +160,12 @@ impl Builtin {
                             load_history(state, Some(self.args[1].clone()));
                             return Ok(());
                         }
-                        "-w" | "-a" => {
+                        "-w" => {
                             save_history(state, Some(self.args[1].clone()));
+                            return Ok(());
+                        }
+                        "-a" => {
+                            append_history(state, Some(self.args[1].clone()));
                             return Ok(());
                         }
                         _ => {}

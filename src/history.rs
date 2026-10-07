@@ -17,6 +17,21 @@ pub(crate) fn save_history(state: &mut ShellState, file: Option<String>) {
     }
 }
 
+pub(crate) fn append_history(state: &mut ShellState, file: Option<String>) {
+    let file = file.or(std::env::var("HISTFILE").ok());
+    if let Some(histfile) = file {
+        let _ = state.rl.append_history(&histfile);
+
+        // Remove versioning tag for CodeCrafters
+        #[cfg(feature = "codecrafters")]
+        remove_first_line(&histfile);
+    } else {
+        // No default history persistence for codecrafters
+        #[cfg(not(feature = "codecrafters"))]
+        let _ = state.rl.append_history(HISTORY_FILE);
+    }
+}
+
 pub(crate) fn load_history(state: &mut ShellState, file: Option<String>) {
     let file = file.or(std::env::var("HISTFILE").ok());
     if let Some(histfile) = file {
@@ -35,6 +50,9 @@ fn remove_first_line(path: &str) -> std::io::Result<()> {
     // Skip the first line
     let mut first_line = String::new();
     reader.read_line(&mut first_line)?;
+    if first_line != "#V2\n" {
+        return Ok(());
+    }
 
     // Read the rest of the file
     let mut rest = Vec::new();
