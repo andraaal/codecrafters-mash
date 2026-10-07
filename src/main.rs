@@ -2,11 +2,13 @@ mod args;
 mod builtin;
 mod cmd;
 mod completion;
+mod history;
 mod parser;
 
 use crate::args::Args;
 use crate::cmd::{Cmd, StreamTarget};
 use crate::completion::ShellHelper;
+use crate::history::{load_history, save_history};
 use crate::parser::{Expr, Parser};
 use rustyline::Editor;
 use rustyline::config::Configurer;
@@ -102,7 +104,12 @@ fn main() {
         }
     };
 
+    // No aliases on codecrafters
+    #[cfg(not(feature = "codecrafters"))]
     let aliases = load_aliases(ALIAS_FILE);
+    #[cfg(feature = "codecrafters")]
+    let aliases: HashMap<String, String> = HashMap::new();
+
     let mut helper = ShellHelper::new();
     let cmds = helper.get_commands_mut();
     for alias in &aliases {
@@ -112,8 +119,9 @@ fn main() {
     rl.set_auto_add_history(true);
     rl.set_completion_type(rustyline::CompletionType::List);
     rl.set_helper(Some(helper));
-    let _ = rl.load_history(HISTORY_FILE);
+
     let mut state = ShellState { rl, aliases };
+    load_history(&mut state, None);
 
     loop {
         match state.rl.readline("$ ") {
@@ -231,12 +239,6 @@ fn prepare_exec(stmt: Expr, rl: &mut ShellState) -> Result<Cmd, std::io::Error> 
 }
 
 fn exit_shell(state: &mut ShellState) -> ! {
-    if let Err(err) = save_aliases(ALIAS_FILE, &state.aliases) {
-        eprintln!("failed to save aliases: {}", err);
-    }
-
-    if let Err(e) = state.rl.save_history(HISTORY_FILE) {
-        eprintln!("failed to save history: {}", e);
-    }
+    save_history(state, None);
     exit(0);
 }
