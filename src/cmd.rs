@@ -230,6 +230,19 @@ impl Cmd {
         Ok(())
     }
 
+    /// Executes the command asynchronously and returns immediately
+    pub(crate) fn start(&mut self, state: &mut ShellState) -> Result<(), Error> {
+        match self {
+            Cmd::External(command) => {
+                command.spawn()?;
+            }
+            Cmd::Builtin(builtin) => {
+                builtin.execute(state)?;
+            }
+        };
+        Ok(())
+    }
+
     /// Appends arguments to the command's existing argument list.
     pub(crate) fn set_args(&mut self, args: &mut Vec<String>) {
         match self {

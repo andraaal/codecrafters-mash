@@ -129,7 +129,7 @@ fn main() {
                 match parser.compile() {
                     Ok(exprs) => {
                         for expr in exprs {
-                            match execute(expr, &mut state) {
+                            match prepare_exec(expr, &mut state) {
                                 Ok(mut cmd) => {
                                     if let Err(e) = cmd.wait(&mut state) {
                                         if cfg!(feature = "codecrafters")
@@ -169,11 +169,11 @@ fn main() {
     }
 }
 
-fn execute(stmt: Expr, rl: &mut ShellState) -> Result<Cmd, std::io::Error> {
+fn prepare_exec(stmt: Expr, rl: &mut ShellState) -> Result<Cmd, std::io::Error> {
     match stmt {
         Expr::Cmd(cmd) => Ok(cmd),
         Expr::OverwriteOutToFile(cmd, target_file) => {
-            let mut command = execute(*cmd, rl)?;
+            let mut command = prepare_exec(*cmd, rl)?;
             let file = OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -183,7 +183,7 @@ fn execute(stmt: Expr, rl: &mut ShellState) -> Result<Cmd, std::io::Error> {
             Ok(command)
         }
         Expr::AppendOutToFile(cmd, target_file) => {
-            let mut command = execute(*cmd, rl)?;
+            let mut command = prepare_exec(*cmd, rl)?;
             let file = OpenOptions::new()
                 .append(true)
                 .create(true)
@@ -192,7 +192,7 @@ fn execute(stmt: Expr, rl: &mut ShellState) -> Result<Cmd, std::io::Error> {
             Ok(command)
         }
         Expr::OverwriteErrToFile(cmd, target_file) => {
-            let mut command = execute(*cmd, rl)?;
+            let mut command = prepare_exec(*cmd, rl)?;
             let file = OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -202,7 +202,7 @@ fn execute(stmt: Expr, rl: &mut ShellState) -> Result<Cmd, std::io::Error> {
             Ok(command)
         }
         Expr::AppendErrToFile(cmd, target_file) => {
-            let mut command = execute(*cmd, rl)?;
+            let mut command = prepare_exec(*cmd, rl)?;
             let file = OpenOptions::new()
                 .append(true)
                 .create(true)
@@ -214,11 +214,11 @@ fn execute(stmt: Expr, rl: &mut ShellState) -> Result<Cmd, std::io::Error> {
             panic!("Compiler's fault: Should not execute if there are any error tokens.")
         }
         Expr::Pipe(lhs, rhs) => {
-            let mut left_cmd = execute(*lhs, rl)?;
-            let mut right_cmd = execute(*rhs, rl)?;
+            let mut left_cmd = prepare_exec(*lhs, rl)?;
+            let mut right_cmd = prepare_exec(*rhs, rl)?;
             left_cmd.set_stdout(StreamTarget::Child(&mut right_cmd))?;
 
-            if let Err(err) = left_cmd.wait(rl) {
+            if let Err(err) = left_cmd.start(rl) {
                 if cfg!(feature = "codecrafters") && err.kind() == ErrorKind::NotFound {
                     println!("{}: command not found", left_cmd.name());
                 } else {

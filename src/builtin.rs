@@ -104,7 +104,15 @@ impl Builtin {
                 exit_shell(state);
             }
             BuiltinType::Echo => {
-                let mut out = self.args.join(" ");
+                let mut curated = self.args.clone();
+                if let Some(pos) = self.args.iter().position(|e| e == "-e") {
+                    curated.remove(pos);
+                    curated = curated
+                        .into_iter()
+                        .map(|e| e.replace("\\n", "\n"))
+                        .collect();
+                }
+                let mut out = curated.join(" ");
                 out.push('\n');
                 self.write_stdout(out.as_str())?;
             }

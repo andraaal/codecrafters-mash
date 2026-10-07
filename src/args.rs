@@ -68,14 +68,8 @@ impl<'a> Args<'a> {
                     if self.pos + 1 < len {
                         let n = bytes[self.pos + 1];
                         // Escape everything outside of quotes; escape only certain characters inside double quotes
-                        if quotes.is_none()
-                            || n == b'\\'
-                            || n == b'"'
-                            || n == b'$'
-                            || n == b'\n'
-                            || n == b'`'
-                        {
-                            let token = &self.raw[start.unwrap_or(self.pos)..self.pos];
+                        if quotes.is_none() || n == b'\\' || n == b'"' || n == b'$' || n == b'`' {
+                            let mut token = &self.raw[start.unwrap_or(self.pos)..self.pos];
                             segments.push_str(token);
                             self.pos += 1;
                             start = Some(self.pos);
