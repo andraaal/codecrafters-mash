@@ -9,6 +9,7 @@ use crate::cmd::{Cmd, StreamTarget};
 use crate::completion::ShellHelper;
 use crate::parser::{Expr, Parser};
 use rustyline::Editor;
+use rustyline::config::Configurer;
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use std::collections::HashMap;
@@ -105,9 +106,10 @@ fn main() {
     let mut helper = ShellHelper::new();
     let cmds = helper.get_commands_mut();
     for alias in &aliases {
-        cmds.insert(alias.0.to_owned());
+        cmds.push(alias.0.to_owned());
     }
 
+    rl.set_completion_type(rustyline::CompletionType::List);
     rl.set_helper(Some(helper));
     let _ = rl.load_history(HISTORY_FILE);
     let mut state = ShellState { rl, aliases };

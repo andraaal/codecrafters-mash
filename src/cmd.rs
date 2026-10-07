@@ -3,7 +3,6 @@ use crate::builtin::Builtin;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Error, PipeReader, PipeWriter, pipe};
-use std::ops::Deref;
 use std::process::{Command, Stdio};
 use std::rc::Rc;
 

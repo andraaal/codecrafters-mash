@@ -164,7 +164,7 @@ impl Builtin {
                     } else {
                         state.aliases.insert(alias.clone(), replacement.clone());
                         if let Some(helper) = state.rl.helper_mut() {
-                            helper.get_commands_mut().insert(alias.clone());
+                            helper.get_commands_mut().push(alias.clone());
                         }
                     }
                 } else {
@@ -175,7 +175,10 @@ impl Builtin {
                 if let Some(alias) = self.args.first() {
                     state.aliases.remove(alias);
                     if let Some(helper) = state.rl.helper_mut() {
-                        helper.get_commands_mut().remove(alias);
+                        if let Some(pos) = helper.get_commands_mut().iter().position(|x| x == alias)
+                        {
+                            helper.get_commands_mut().remove(pos);
+                        }
                     }
                 } else {
                     self.write_stderr("Unalias requires one argument.\n")?;

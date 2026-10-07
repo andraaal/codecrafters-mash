@@ -5,11 +5,10 @@ use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::line_buffer::LineBuffer;
 use rustyline::validate::Validator;
 use rustyline::{Changeset, Context, Helper};
-use std::collections::HashSet;
 
 /// Configures `rustyline` completion, hints, and validation for shell input.
 pub(crate) struct ShellHelper {
-    commands: HashSet<String>,
+    commands: Vec<String>,
     history_hinter: HistoryHinter,
     file_completer: FilenameCompleter,
 }
@@ -17,21 +16,23 @@ pub(crate) struct ShellHelper {
 impl ShellHelper {
     /// Creates a helper with the shell's built-in command list.
     pub(crate) fn new() -> Self {
-        let mut commands = HashSet::new();
+        let mut commands = Vec::new();
 
-        commands.insert("exit".to_string());
-        commands.insert("echo".to_string());
-        commands.insert("type".to_string());
-        commands.insert("pwd".to_string());
-        commands.insert("cd".to_string());
-        commands.insert("history".to_string());
-        commands.insert("alias".to_string());
-        commands.insert("unalias".to_string());
+        commands.push("exit".to_string());
+        commands.push("echo".to_string());
+        commands.push("type".to_string());
+        commands.push("pwd".to_string());
+        commands.push("cd".to_string());
+        commands.push("history".to_string());
+        commands.push("alias".to_string());
+        commands.push("unalias".to_string());
 
         // Insert names of executables in PATH
         if let Some(paths) = get_executable_names() {
             commands.extend(paths);
         }
+
+        commands.sort_unstable();
 
         ShellHelper {
             commands,
@@ -41,7 +42,7 @@ impl ShellHelper {
     }
 
     /// Returns the command set so builtins and aliases can be registered.
-    pub(crate) fn get_commands_mut(&mut self) -> &mut HashSet<String> {
+    pub(crate) fn get_commands_mut(&mut self) -> &mut Vec<String> {
         &mut self.commands
     }
 }
@@ -109,14 +110,10 @@ impl Completer for ShellHelper {
                 if cmd.starts_with(token) {
                     #[allow(unused_mut)]
                     let mut replace = cmd.clone();
-                    #[allow(unused_mut)]
-                    let mut display = cmd.clone();
+                    let display = cmd.clone();
 
                     #[cfg(feature = "codecrafters")]
-                    {
-                        replace.push(' ');
-                        display = "".to_string();
-                    }
+                    replace.push(' ');
 
                     out.push(Pair {
                         display: display,
