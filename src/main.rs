@@ -109,6 +109,7 @@ fn main() {
         cmds.push(alias.0.to_owned());
     }
 
+    rl.set_auto_add_history(true);
     rl.set_completion_type(rustyline::CompletionType::List);
     rl.set_helper(Some(helper));
     let _ = rl.load_history(HISTORY_FILE);
@@ -121,7 +122,6 @@ fn main() {
                 if trimmed.is_empty() {
                     continue;
                 }
-                let _ = state.rl.add_history_entry(trimmed);
 
                 let words = Args::new(trimmed);
                 let peek_args = words.peekable();
