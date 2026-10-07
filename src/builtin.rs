@@ -160,8 +160,9 @@ impl Builtin {
                     .rl
                     .history()
                     .iter()
+                    .enumerate()
                     .skip(state.rl.history().len().saturating_sub(see));
-                for (i, entry) in history.enumerate() {
+                for (i, entry) in history {
                     self.write_stdout(&format!("{:>5}  {}\n", i + 1, entry))?;
                 }
             }
