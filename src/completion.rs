@@ -5,6 +5,7 @@ use rustyline::line_buffer::LineBuffer;
 use rustyline::validate::Validator;
 use rustyline::{Changeset, Context, Helper};
 use std::collections::HashSet;
+use std::iter::once;
 
 /// Configures `rustyline` completion, hints, and validation for shell input.
 pub(crate) struct ShellHelper {
@@ -47,7 +48,11 @@ impl Validator for ShellHelper {}
 impl Hinter for ShellHelper {
     type Hint = String;
     fn hint(&self, line: &str, pos: usize, ctx: &Context<'_>) -> Option<Self::Hint> {
-        self.history_hinter.hint(line, pos, ctx)
+        if cfg!(feature = "codecrafters") {
+            None
+        } else {
+            self.history_hinter.hint(line, pos, ctx)
+        }
     }
 }
 
@@ -75,9 +80,20 @@ impl Completer for ShellHelper {
             let mut out = Vec::new();
             for cmd in &self.commands {
                 if cmd.starts_with(token) {
+                    #[allow(unused_mut)]
+                    let mut replace = cmd.clone();
+                    #[allow(unused_mut)]
+                    let mut display = cmd.clone();
+
+                    #[cfg(feature = "codecrafters")]
+                    {
+                        replace.extend(once(" ".to_string()));
+                        display = "".to_string();
+                    }
+
                     out.push(Pair {
-                        display: cmd.clone(),
-                        replacement: cmd.clone(),
+                        display: display,
+                        replacement: replace,
                     });
                 }
             }
