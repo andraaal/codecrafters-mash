@@ -41,7 +41,7 @@ impl ShellHelper {
         }
     }
 
-    /// Returns the command set so builtins and aliases can be registered.
+    /// Returns the command set so aliases can be registered.
     pub(crate) fn get_commands_mut(&mut self) -> &mut Vec<String> {
         &mut self.commands
     }
@@ -96,12 +96,26 @@ impl Completer for ShellHelper {
         let safe_pos = pos.min(line.len());
         let before = &line[..safe_pos];
 
-        let start = before
+        let mut start = before
             .rfind(char::is_whitespace)
             .map(|i| i + 1)
             .unwrap_or(0);
 
         let token = &line[start..safe_pos];
+        let first_word = before[..start].trim().is_empty();
+
+        let mut result = self.file_completer.complete(line, pos, ctx);
+        if let Ok((_, pairs)) = &mut result {
+            for pair in pairs {
+                if !pair.replacement.ends_with("/") && !pair.replacement.ends_with("\\") {
+                    pair.replacement.push(' ');
+                }
+            }
+        };
+
+        if !first_word {
+            return result;
+        }
 
         let mut out = Vec::new();
         for cmd in &self.commands {
@@ -118,18 +132,8 @@ impl Completer for ShellHelper {
             }
         }
 
-        let mut result = self.file_completer.complete(line, pos, ctx);
-        if let Ok((_, pairs)) = &mut result {
-            for pair in pairs {
-                if !pair.replacement.ends_with("/") && !pair.replacement.ends_with("\\") {
-                    pair.replacement.push(' ');
-                }
-            }
-        };
-
-        if let Ok(mut res) = result
-            && res.0 == start
-        {
+        if let Ok(mut res) = result {
+            start = res.0.min(start);
             out.append(&mut res.1);
         }
         Ok((start, out))
