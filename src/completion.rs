@@ -109,6 +109,8 @@ impl Completer for ShellHelper {
             for pair in pairs {
                 if !pair.replacement.ends_with("/") && !pair.replacement.ends_with("\\") {
                     pair.replacement.push(' ');
+                } else {
+                    pair.display.push('/');
                 }
             }
         };
