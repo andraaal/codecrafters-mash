@@ -102,29 +102,37 @@ impl Completer for ShellHelper {
             .unwrap_or(0);
 
         let token = &line[start..safe_pos];
-        let first_word = before[..start].trim().is_empty();
 
-        if first_word {
-            let mut out = Vec::new();
-            for cmd in &self.commands {
-                if cmd.starts_with(token) {
-                    #[allow(unused_mut)]
-                    let mut replace = cmd.clone();
-                    let display = cmd.clone();
+        let mut out = Vec::new();
+        for cmd in &self.commands {
+            if cmd.starts_with(token) {
+                let mut replace = cmd.clone();
+                let display = cmd.clone();
 
-                    #[cfg(feature = "codecrafters")]
-                    replace.push(' ');
+                replace.push(' ');
 
-                    out.push(Pair {
-                        display: display,
-                        replacement: replace,
-                    });
+                out.push(Pair {
+                    display: display,
+                    replacement: replace,
+                });
+            }
+        }
+
+        let mut result = self.file_completer.complete(line, pos, ctx);
+        if let Ok((_, pairs)) = &mut result {
+            for pair in pairs {
+                if !pair.replacement.ends_with("/") && !pair.replacement.ends_with("\\") {
+                    pair.replacement.push(' ');
                 }
             }
-            Ok((start, out))
-        } else {
-            self.file_completer.complete(line, pos, ctx)
+        };
+
+        if let Ok(mut res) = result
+            && res.0 == start
+        {
+            out.append(&mut res.1);
         }
+        Ok((start, out))
     }
 
     fn update(&self, line: &mut LineBuffer, start: usize, elected: &str, cl: &mut Changeset) {
